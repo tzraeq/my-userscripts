@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         链动小铺：隐藏缺货、价格排序、回车搜索
 // @namespace    local.wzyp.shop-enhancer
-// @version      1.0.0
+// @version      1.0.1
 // @description  店铺商品默认隐藏缺货，支持按售价排序，以及在原搜索框按回车搜索。
 // @match        https://wzyp.cn/shop/*
 // @match        http://wzyp.cn/shop/*
@@ -32,6 +32,8 @@
             background: var(--color-bg-2, #fff); color: inherit;
         }
         .wzyp-tools .wzyp-summary { color: var(--color-text-3, #666); }
+        .goods-list.wzyp-list { display: flex !important; flex-direction: column; }
+        .goods-list > .wzyp-tools { order: -1; }
         .goods_content .wzyp-grid {
             display: grid !important;
             grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr));
@@ -42,7 +44,8 @@
             transform: none !important; width: auto !important; min-width: 0 !important;
             margin: 0 !important; box-sizing: border-box; align-self: start;
         }
-        .goods_content .goods_item.wzyp-sold-out { display: none !important; }
+        .goods_content .goods_item.wzyp-sold-out,
+        .goods-list .goods-item.wzyp-sold-out { display: none !important; }
     `;
     document.head.append(style);
 
@@ -93,11 +96,11 @@
         observer.disconnect();
         try {
             if (!location.pathname.startsWith('/shop/')) return;
-            for (const content of document.querySelectorAll('.goods_content')) {
+            for (const content of document.querySelectorAll('.goods_content, .goods-list')) {
                 const bar = content.querySelector('.wzyp-tools') || makeToolbar(content);
                 bar.querySelector('input').checked = showSoldOut;
                 bar.querySelector('select').value = sortMode;
-                const cards = [...content.querySelectorAll('.goods_item')];
+                const cards = [...content.querySelectorAll('.goods_item, .goods-item')];
                 const groups = new Map();
                 let hidden = 0;
                 for (const card of cards) {
@@ -109,7 +112,7 @@
                     groups.get(parent).push(card);
                 }
                 for (const [parent, items] of groups) {
-                    parent.classList.add('wzyp-grid');
+                    parent.classList.add(items[0].matches('.goods-item') ? 'wzyp-list' : 'wzyp-grid');
                     // CSS order keeps Vue's DOM order and original click handlers intact.
                     const sorted = items.map((card, index) => ({ card, index, price: priceOf(card) }));
                     if (sortMode !== 'original') {
