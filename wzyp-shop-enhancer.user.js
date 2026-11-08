@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         链动小铺：隐藏缺货、价格排序、回车搜索
 // @namespace    local.wzyp.shop-enhancer
-// @version      1.0.1
+// @version      1.0.3
 // @description  店铺商品默认隐藏缺货，支持按售价排序，以及在原搜索框按回车搜索。
 // @match        https://wzyp.cn/shop/*
 // @match        http://wzyp.cn/shop/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
 // ==/UserScript==
 
 (() => {
@@ -15,6 +16,22 @@
     let showSoldOut = false;
     let sortMode = 'original';
     let scheduled = false;
+    let settingsKey = '';
+    let refreshingUntil = 0;
+    let refreshingLoadingSeen = false;
+
+    function loadSettings() {
+        const key = `shop-settings:${location.pathname.split('/')[2]}`;
+        if (key === settingsKey) return;
+        settingsKey = key;
+        const saved = GM_getValue(key, {});
+        showSoldOut = saved?.showSoldOut === true;
+        sortMode = ['original', 'asc', 'desc'].includes(saved?.sortMode) ? saved.sortMode : 'original';
+    }
+
+    function saveSettings() {
+        GM_setValue(settingsKey, { showSoldOut, sortMode });
+    }
 
     const style = document.createElement('style');
     style.textContent = `
@@ -32,6 +49,13 @@
             background: var(--color-bg-2, #fff); color: inherit;
         }
         .wzyp-tools .wzyp-summary { color: var(--color-text-3, #666); }
+        .wzyp-refresh {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 30px; height: 30px; padding: 5px; cursor: pointer;
+            border: 1px solid #c9cdd4; border-radius: 4px;
+            background: var(--color-bg-2, #fff); color: inherit;
+        }
+        .wzyp-refresh:disabled { opacity: .45; cursor: default; }
         .goods-list.wzyp-list { display: flex !important; flex-direction: column; }
         .goods-list > .wzyp-tools { order: -1; }
         .goods_content .wzyp-grid {
@@ -62,6 +86,15 @@
             /^(缺货|售罄|已售罄|无库存)$/.test(stock.textContent.trim())));
     }
 
+    function refreshTarget(content) {
+        const scope = content.closest('.page_content, .page-goods');
+        const category = scope?.querySelector('.arco-menu-selected, .fl_box_leng_xz, .category_list .category.active');
+        if (category) return category;
+        const search = document.querySelector('input[placeholder="搜索商品"]');
+        return search?.value.trim() ? search.closest('.arco-input-search')
+            ?.querySelector('.arco-input-suffix .arco-icon-hover') : null;
+    }
+
     function makeToolbar(content) {
         const bar = document.createElement('div');
         bar.className = 'wzyp-tools';
@@ -76,16 +109,35 @@
                     <option value="desc">价格从高到低</option>
                 </select>
             </label>
+            <button type="button" class="wzyp-refresh" title="刷新当前分类" aria-label="刷新当前分类">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M20 7v5h-5M4 17v-5h5M5.6 7a7 7 0 0 1 11.9-1L20 9M4 15l2.5 3A7 7 0 0 0 18.4 17" />
+                </svg>
+            </button>
             <span class="wzyp-summary" role="status"></span>
             <small>筛选和排序针对已加载商品；点击原站“加载更多”后自动更新。</small>
         `;
         bar.querySelector('input').addEventListener('change', event => {
+            loadSettings();
             showSoldOut = event.target.checked;
+            saveSettings();
             schedule();
         });
         bar.querySelector('select').addEventListener('change', event => {
+            loadSettings();
             sortMode = event.target.value;
+            saveSettings();
             schedule();
+        });
+        bar.querySelector('.wzyp-refresh').addEventListener('click', event => {
+            const target = refreshTarget(content);
+            if (!target) return;
+            event.currentTarget.disabled = true;
+            refreshingUntil = Date.now() + 500;
+            refreshingLoadingSeen = false;
+            target.click();
+            schedule();
+            window.setTimeout(schedule, 550);
         });
         content.prepend(bar);
         return bar;
@@ -96,10 +148,18 @@
         observer.disconnect();
         try {
             if (!location.pathname.startsWith('/shop/')) return;
+            loadSettings();
             for (const content of document.querySelectorAll('.goods_content, .goods-list')) {
                 const bar = content.querySelector('.wzyp-tools') || makeToolbar(content);
                 bar.querySelector('input').checked = showSoldOut;
                 bar.querySelector('select').value = sortMode;
+                const refresh = bar.querySelector('.wzyp-refresh');
+                const loading = Boolean(content.closest('.page_content, .page-goods')
+                    ?.querySelector('.loading-three-colomns-container'));
+                if (loading) refreshingLoadingSeen = true;
+                else if (refreshingLoadingSeen) refreshingUntil = 0;
+                refresh.disabled = loading || refreshingUntil > Date.now() || !refreshTarget(content);
+                refresh.setAttribute('aria-busy', String(loading));
                 const cards = [...content.querySelectorAll('.goods_item, .goods-item')];
                 const groups = new Map();
                 let hidden = 0;
